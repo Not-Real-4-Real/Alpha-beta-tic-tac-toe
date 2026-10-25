@@ -5,6 +5,8 @@ from engine.rules import *
 
 from evaluation.v1 import evaluate
 
+from move_ordering.v2 import rank_candidates
+
 def alphabeta(board, depth, max_depth, alpha, beta, maximizing, ai, human, K, last):
     global nodes_visited
     nodes_visited += 1
@@ -18,7 +20,7 @@ def alphabeta(board, depth, max_depth, alpha, beta, maximizing, ai, human, K, la
     if depth >= max_depth:
         return evaluate(board, ai, human, K)
 
-    moves = legal_moves(board)
+    moves = rank_candidates(board, legal_moves(board), ai, human, K)
     
     if not moves:
         return 0                              # board full: draw
@@ -59,7 +61,7 @@ def best_move(board, ai, human, K, max_depth=4):
 
     start = time.perf_counter()
 
-    moves = legal_moves(board)
+    moves = rank_candidates(board, legal_moves(board), ai, human, K)
 
     for (r, c) in moves:
         board[r][c] = ai
