@@ -1,158 +1,177 @@
-import math
-import time
+import random, time, math, statistics
 
 from engine.rules import *
-from engine.search import best_move
+from engine.search import *
 
-def simulate_games(
-    num_games=100,
-    R=3,
-    C=3,
-    K=3,
-    x_depth=4,
-    o_depth=4,
-    progress_interval=10
-):
+from evaluation.v1 import evaluate as evaluate_v1
+from evaluation.v2 import evaluate as evaluate_v2
+
+OTHER = {'X': 'O', 'O': 'X'}
+
+def random_opening(R, C, plies, rng):
+    """Random cells, alternating X/O. Keep plies <= 2*(K-1) so no one can win."""
+    cells = rng.sample([(r, c) for r in range(R) for c in range(C)], plies)
+    return cells
+
+def play_game(R, C, K, x_agent, o_agent, opening, verbose=False):
+    board = [[EMPTY] * C for _ in range(R)]
+    agents = {'X': x_agent, 'O': o_agent}
+    stats = {
+        p: {'time': 0.0, 'nodes': 0, 'moves': 0}
+        for p in 'XO'
+    }
+
+    turn = 'X'
+
+    # Apply the opening moves.
+    for r, c in opening:
+        board[r][c] = turn
+        turn = OTHER[turn]
+
+    # Display the initial board, including the opening.
+    if verbose:
+        print("\n" + "=" * 50)
+        print(f"Game: X={x_agent['name']} vs O={o_agent['name']}")
+        print(f"Opening moves: {len(opening)}")
+        print("Initial board:")
+        print_board(board)
+
+    def finish(winner):
+        if verbose:
+            total_moves = len(opening) + sum(
+                s['moves'] for s in stats.values()
+            )
+            total_time = sum(s['time'] for s in stats.values())
+
+            print("Final board:")
+            print_board(board)
+            print(f"Winner: {winner or 'Draw'}")
+            print(f"Total moves: {total_moves}")
+            print(f"Total AI search time: {total_time:.3f} s")
+
+            for mark in 'XO':
+                s = stats[mark]
+                elapsed = s['time']
+                throughput = s['moves'] / elapsed if elapsed > 0 else 0.0
+
+                print(
+                    f"  {mark} ({agents[mark]['name']}): "
+                    f"{s['moves']} moves, "
+                    f"{elapsed:.3f} s, "
+                    f"{throughput:.2f} moves/s, "
+                    f"{s['nodes']:,} nodes"
+                )
+
+            print("=" * 50)
+
+        return winner, stats
+
+    while True:
+        if not any(EMPTY in row for row in board):
+            return finish(None)
+
+        agent = agents[turn]
+
+        move, _, elapsed, nodes = best_move(
+            board,
+            ai=turn,
+            human=OTHER[turn],
+            K=K,
+            max_depth=agent['depth'],
+            eval_fn=agent['eval']
+        )
+
+        stats[turn]['time'] += elapsed
+        stats[turn]['nodes'] += nodes
+        stats[turn]['moves'] += 1
+
+        if move is None:
+            return finish(None)
+
+        r, c = move
+        board[r][c] = turn
+
+        if check_win(board, r, c, turn, K):
+            return finish(turn)
+
+        turn = OTHER[turn]
+
+def tournament(a, b, num_pairs=10, R=7, C=7, K=4, open_plies=4, seed=0, verbose=False):
     """
-    Simulate AI vs AI games using alpha-beta search.
-    X and O use independent search depths.
-    The starting player alternates between games.
+    Each random opening is played twice, with colors swapped.
+    verbose=True prints the initial and final board of every game.
     """
-    if num_games < 1:
-        raise ValueError("num_games must be at least 1.")
-    if x_depth < 1 or o_depth < 1:
-        raise ValueError("Search depths must be at least 1.")
-    if R < 1 or C < 1 or not (1 <= K <= max(R, C)):
-        raise ValueError("Invalid board dimensions or K.")
+    rng = random.Random(seed)
 
-    total_wins = {'X': 0, 'O': 0}
-    draws = 0
-    starter_wins = {'X': 0, 'O': 0}
-    starter_losses = {'X': 0, 'O': 0}
+    scores = []
+    agg = {
+        n: {'time': 0.0, 'nodes': 0, 'moves': 0}
+        for n in (a['name'], b['name'])
+    }
 
-    search_time = {'X': 0.0, 'O': 0.0}
-    nodes_visited_by_player = {'X': 0, 'O': 0}
-    moves_by_player = {'X': 0, 'O': 0}
+    W = L = D = 0
 
-    depths = {'X': x_depth, 'O': o_depth}
-    other = {'X': 'O', 'O': 'X'}
+    for pair_idx in range(num_pairs):
+        opening = random_opening(R, C, open_plies, rng)
 
-    simulation_start = time.perf_counter()
+        for a_is_x in (True, False):
+            x, o = (a, b) if a_is_x else (b, a)
 
-    for game in range(num_games):
-        board = [[EMPTY] * C for _ in range(R)]
-
-        starter = 'X' if game % 2 == 0 else 'O'
-        turn = starter
-
-        while True:
-            move, score, elapsed, nodes = best_move(
-                board,
-                ai=turn,
-                human=other[turn],
-                K=K,
-                max_depth=depths[turn]
+            winner, stats = play_game(
+                R, C, K, x, o, opening,
+                verbose=verbose
             )
 
-            search_time[turn] += elapsed
-            nodes_visited_by_player[turn] += nodes
-            moves_by_player[turn] += 1
+            a_mark = 'X' if a_is_x else 'O'
 
-            if move is None:
-                draws += 1
-                break
+            # Aggregate by agent, not by mark.
+            for mark, agent in (('X', x), ('O', o)):
+                for key in ('time', 'nodes', 'moves'):
+                    agg[agent['name']][key] += stats[mark][key]
 
-            r, c = move
-            board[r][c] = turn
+            if winner is None:
+                D += 1
+                scores.append(0.5)
+            elif winner == a_mark:
+                W += 1
+                scores.append(1.0)
+            else:
+                L += 1
+                scores.append(0.0)
 
-            if check_win(board, r, c, turn, K):
-                total_wins[turn] += 1
+    n = len(scores)
+    mean = sum(scores) / n
+    se = statistics.stdev(scores) / math.sqrt(n) if n > 1 else 0.0
 
-                if turn == starter:
-                    starter_wins[starter] += 1
-                else:
-                    starter_losses[starter] += 1
+    print(
+        f"\n{a['name']} (d{a['depth']}) vs "
+        f"{b['name']} (d{b['depth']}) | "
+        f"{R}x{C}, K={K}, {n} games"
+    )
+    print(
+        f"{a['name']}: {W}W {L}L {D}D "
+        f"-> score {mean:.3f} +/- {2 * se:.3f} (95%)"
+    )
 
-                break
+    print("\nTournament performance:")
+    print(
+        f"{'Agent':<18} {'Moves':>8} {'Time (s)':>11} "
+        f"{'Moves/s':>11} {'Nodes':>12} {'ms/move':>11}"
+    )
+    print("-" * 75)
 
-            # Full board: draw.
-            if not any(EMPTY in row for row in board):
-                draws += 1
-                break
+    for name, s in agg.items():
+        moves = s['moves']
+        elapsed = s['time']
 
-            turn = other[turn]
-
-        completed = game + 1
-
-        if progress_interval > 0 and completed % progress_interval == 0:
-            print(
-                f"Games: {completed:,}/{num_games:,} | "
-                f"X wins: {total_wins['X']:,} | "
-                f"O wins: {total_wins['O']:,} | "
-                f"Draws: {draws:,}"
-            )
-
-    total_elapsed = time.perf_counter() - simulation_start
-    total_moves = sum(moves_by_player.values())
-    total_nodes = sum(nodes_visited_by_player.values())
-    total_search_time = sum(search_time.values())
-
-    print("\n========== SIMULATION RESULTS ==========")
-    print(f"Games played:       {num_games:,}")
-    print(f"Board:              {R} x {C}")
-    print(f"Winning length K:   {K}")
-    print(f"X search depth:     {x_depth}")
-    print(f"O search depth:     {o_depth}")
-    print(f"X wins:             {total_wins['X']:,}")
-    print(f"O wins:             {total_wins['O']:,}")
-    print(f"Draws:              {draws:,}")
-
-    print("\nWin rates:")
-    print(f"X:                  {100 * total_wins['X'] / num_games:.2f}%")
-    print(f"O:                  {100 * total_wins['O'] / num_games:.2f}%")
-    print(f"Draw:               {100 * draws / num_games:.2f}%")
-
-    print("\nResults by starting player:")
-    for player in ('X', 'O'):
-        games_started = sum(
-            1 for game in range(num_games)
-            if ('X' if game % 2 == 0 else 'O') == player
-        )
-        player_draws = (
-            games_started
-            - starter_wins[player]
-            - starter_losses[player]
-        )
+        throughput = moves / elapsed if elapsed > 0 else 0.0
+        ms_per_move = elapsed * 1000 / moves if moves else 0.0
 
         print(
-            f"{player} started: "
-            f"{starter_wins[player]} wins, "
-            f"{starter_losses[player]} losses, "
-            f"{player_draws} draws"
+            f"{name:<18} {moves:>8,} {elapsed:>11.3f} "
+            f"{throughput:>11.2f} {s['nodes']:>12,} "
+            f"{ms_per_move:>11.2f}"
         )
-
-    print("\nSearch statistics by player:")
-    for player in ('X', 'O'):
-        moves = moves_by_player[player]
-        nodes = nodes_visited_by_player[player]
-        elapsed = search_time[player]
-
-        print(f"\n{player} (depth {depths[player]}):")
-        print(f"  Moves searched:   {moves:,}")
-        print(f"  Nodes visited:    {nodes:,}")
-        print(f"  Average nodes/move: {nodes / moves:,.2f}"
-              if moves else "  Average nodes/move: N/A")
-        print(f"  Search time:      {elapsed:.2f} seconds")
-        print(f"  Average time/move: {elapsed / moves:.4f} seconds"
-              if moves else "  Average time/move: N/A")
-
-    print("\nOverall performance:")
-    print(f"Total moves searched: {total_moves:,}")
-    print(f"Total nodes visited:  {total_nodes:,}")
-    print(f"Total search time:    {total_search_time:.2f} seconds")
-    print(f"Total elapsed time:   {total_elapsed:.2f} seconds")
-    print(f"Games per second:     {num_games / total_elapsed:.2f}"
-          if total_elapsed else "Games per second:     N/A")
 
 def print_board(board):
     """Print a dynamically sized, labeled board."""
@@ -242,7 +261,7 @@ def play():
             turn = ai
 
         else:
-            move, score, elapsed, nodes = best_move(board, ai, human, K, max_depth)
+            move, score, elapsed, nodes = best_move(board, ai, human, K, max_depth, evaluate_v1)
 
             if move is None:
                 print("Draw!")
@@ -272,14 +291,19 @@ def play():
             break
 
 if __name__ == "__main__":
-    play()
-    
-    # simulate_games(
-    #     num_games=10,
-    #     R=7,
-    #     C=7,
-    #     K=4,
-    #     x_depth=3,
-    #     o_depth=4,
-    #     progress_interval=1
-    # )
+    # play()
+
+    v1 = {'name': 'vanilla', 'eval': evaluate_v1, 'depth': 3}
+    v2 = {'name': 'v2',      'eval': evaluate_v2, 'depth': 3}
+
+    tournament(
+        v1,
+        v2,
+        num_pairs=10,
+        R=7,
+        C=7,
+        K=4,
+        open_plies=4,
+        seed=0,
+        verbose=True
+    )
