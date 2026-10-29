@@ -223,7 +223,7 @@ def best_move_root(board, ai, human, K, max_depth=4, eval_fn=evaluate,
     return best, best_val, elapsed, nodes_visited
 
 def best_move(board, ai, human, K, max_depth=4, eval_fn=evaluate,
-              use_forcing=True, debug=True, rng=None):
+              use_forcing=True, debug=False, rng=None):
     global nodes_visited
     nodes_visited = 0
 
