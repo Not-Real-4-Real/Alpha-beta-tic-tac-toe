@@ -1,7 +1,7 @@
 import random, time, math, statistics
 
 from engine.rules import *
-from engine.search import *
+from engine.search_v3 import *
 
 from evaluation.v1 import evaluate as evaluate_v1
 from evaluation.v2 import evaluate as evaluate_v2
@@ -399,17 +399,19 @@ def play_v3():
 if __name__ == "__main__":
     # play()
 
-    v1 = {'name': 'vanilla', 'eval': evaluate_v1, 'depth': 3}
-    v2 = {'name': 'v2',      'eval': evaluate_v2, 'depth': 3}
+    # v1 = {'name': 'vanilla', 'eval': evaluate_v1, 'depth': 3}
+    # v2 = {'name': 'v2',      'eval': evaluate_v2, 'depth': 3}
 
-    tournament(
-        v1,
-        v2,
-        num_pairs=10,
-        R=7,
-        C=7,
-        K=4,
-        open_plies=4,
-        seed=0,
-        verbose=True
-    )
+    # tournament(
+    #     v1,
+    #     v2,
+    #     num_pairs=10,
+    #     R=7,
+    #     C=7,
+    #     K=4,
+    #     open_plies=4,
+    #     seed=0,
+    #     verbose=True
+    # )
+
+    play_v3()
