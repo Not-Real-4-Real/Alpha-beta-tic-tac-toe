@@ -290,6 +290,112 @@ def play():
             print("Draw!")
             break
 
+def play_v3():
+    human, ai = 'X', 'O'
+
+    print("Dynamic Tic tac toe")
+    print("Enter the board dimensions and winning length.")
+
+    try:
+        R = int(input("Rows: "))
+        C = int(input("Columns: "))
+        K = int(input("Consecutive marks to win (K): "))
+        max_depth = int(input("Search depth (default 4): ") or "4")
+        use_forcing_input = input(
+            "Enable tactical forcing? (y/n): "
+        ).strip().lower()
+    except ValueError:
+        print("Please enter valid integers.")
+        return
+
+    if R < 1 or C < 1 or not (1 <= K <= max(R, C)):
+        print("Invalid dimensions or K.")
+        return
+
+    if max_depth < 1:
+        print("Search depth must be at least 1.")
+        return
+
+    use_forcing = use_forcing_input not in ('n', 'no')
+
+    board = [[EMPTY] * C for _ in range(R)]
+    turn = human        # Human goes first.
+
+    while True:
+        print_board(board)
+
+        if turn == human:
+            try:
+                raw = input(
+                    f"Your move (row col, 1-{R} and 1-{C}): "
+                )
+                parts = raw.split()
+
+                if len(parts) != 2:
+                    print("Enter two integers: row col.")
+                    continue
+
+                r, c = int(parts[0]) - 1, int(parts[1]) - 1
+
+            except ValueError:
+                print("Enter valid integers.")
+                continue
+
+            if not (0 <= r < R and 0 <= c < C):
+                print("Move is outside the board.")
+                continue
+
+            if board[r][c] != EMPTY:
+                print("That cell is occupied.")
+                continue
+
+            board[r][c] = human
+
+            if check_win(board, r, c, human, K):
+                print_board(board)
+                print("Human (X) wins!")
+                break
+
+            turn = ai
+
+        else:
+            move, score, elapsed, nodes = best_move(
+                board,
+                ai,
+                human,
+                K,
+                max_depth=max_depth,
+                eval_fn=evaluate,
+                use_forcing=use_forcing,
+            )
+
+            if move is None:
+                print("Draw!")
+                break
+
+            r, c = move
+            board[r][c] = ai
+
+            print(f"AI plays row {r + 1}, column {c + 1}")
+            print(f"Evaluation score: {score}")
+            print(f"Search time: {elapsed:.4f} seconds")
+            print(f"Nodes visited: {nodes:,}")
+
+            if elapsed > 0:
+                print(f"Search throughput: {nodes / elapsed:,.0f} nodes/s")
+
+            if check_win(board, r, c, ai, K):
+                print_board(board)
+                print("AI (O) wins!")
+                break
+
+            turn = human
+
+        if not legal_moves(board):
+            print_board(board)
+            print("Draw!")
+            break
+
 if __name__ == "__main__":
     # play()
 
