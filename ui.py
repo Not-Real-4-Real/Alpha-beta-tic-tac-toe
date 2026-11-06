@@ -1,11 +1,13 @@
 import math
 import queue
+import random
 import threading
 import time
 import tkinter as tk
 from functools import partial
 from tkinter import ttk
 
+from engine.rules import *
 from evaluation.v3 import ThreatTracker, make_weights
 from main import (
     DIRS,
@@ -16,8 +18,10 @@ from main import (
     evaluate,
     legal_moves,
 )
-from move_ordering.v2 import rank_candidates
+from move_ordering.v3 import rank_candidates
 
+TOL = 1e-6
+OPENING_SPREAD = 0  # empty board: pick randomly within this distance of the center (0 = always center)
 
 def find_winning_cells(board, r, c, player, K):
     """Return the list of (row, col) cells forming a winning line of length >= K."""
@@ -55,123 +59,105 @@ def get_optimized_candidates(board, max_dist=2):
     return list(cand_set) if cand_set else legal_moves(board)
 
 
-def fast_best_move(board, ai, human, K, max_depth=4, eval_fn=evaluate, use_forcing=True):
+def fast_best_move(board, ai, human, K, max_depth=4, eval_fn=evaluate, use_forcing=True, rng=None):
     """High-performance search for larger boards with neighborhood candidate pruning."""
-    R, C = len(board), len(board[0])
     start = time.perf_counter()
+    if rng is None:
+        rng = random.Random()
 
-    # 1. Opening instant response on empty board (center is mathematically dominant in m,n,k games)
-    occupied = [(r, c) for r in range(R) for c in range(C) if board[r][c] != EMPTY]
-    if not occupied:
-        return (R // 2, C // 2), 0, time.perf_counter() - start, 1
+    R, C = len(board), len(board[0])
+    board = [row[:] for row in board]        # private copy: the search places/removes stones
 
-    # 2. When human plays 1 stone on large board, play center immediately if open
-    if len(occupied) == 1 and R * C >= 36:
-        center = (R // 2, C // 2)
-        if board[center[0]][center[1]] == EMPTY:
-            return center, 0, time.perf_counter() - start, 1
+    # Empty board: nothing to search; vary the opening around the center.
+    if all(cell == EMPTY for row in board for cell in row):
+        s, cr, cc = OPENING_SPREAD, R // 2, C // 2
+        cells = [(r, c)
+                 for r in range(max(0, cr - s), min(R, cr + s + 1))
+                 for c in range(max(0, cc - s), min(C, cc + s + 1))]
+        return rng.choice(cells), 0, time.perf_counter() - start, 1
 
     tr = ThreatTracker(board, K, (ai, human), EMPTY)
-    W = make_weights(K)
-    eval_f = partial(eval_fn, W=W)
+    eval_f = partial(eval_fn, W=make_weights(K))
+    nodes = 0
 
-    # 3. 0ms Immediate Tactical Wins and Blocks
-    mine = tr.win_cells(ai)
-    if mine:
-        return divmod(next(iter(mine)), C), 1000000 - 1, time.perf_counter() - start, 1
+    def alphabeta(depth, alpha, beta, maximizing):
+        nonlocal nodes
+        nodes += 1
 
-    theirs = tr.win_cells(human)
-    if len(theirs) == 1:
-        return divmod(next(iter(theirs)), C), 0, time.perf_counter() - start, 1
-
-    # 4. For smaller boards (<= 5x5), standard search is already instantaneous
-    if R * C <= 25:
-        return best_move(board, ai, human, K, max_depth, eval_fn, use_forcing)
-
-    # 5. For larger boards (6x6+), prune distant candidates outside neighborhood radius
-    max_branch = 14 if R * C >= 64 else 18
-    raw_cands = get_optimized_candidates(board, max_dist=2)
-    ranked = rank_candidates(board, raw_cands, ai, human, K)
-    moves = ranked[:max_branch] if len(ranked) > max_branch else ranked
-
-    nodes_visited = 0
-
-    def _alphabeta(b, depth, lo, hi, maximizing, last):
-        nonlocal nodes_visited
-        nodes_visited += 1
-
-        mover = human if maximizing else ai
+        mover = human if maximizing else ai          # who just moved
         to_move = ai if maximizing else human
         forced = None
 
         if use_forcing:
             if tr.win_cells(to_move):
-                return (1000000 - depth - 1) if to_move == ai else (depth + 1 - 1000000)
-            opp_wins = tr.win_cells(mover)
-            if len(opp_wins) >= 2:
-                return (1000000 - depth - 2) if mover == ai else (depth + 2 - 1000000)
-            if len(opp_wins) == 1:
-                forced = [divmod(next(iter(opp_wins)), C)]
+                return (WIN - depth - 1) if to_move == ai else (depth + 1 - WIN)
+            theirs = tr.win_cells(mover)
+            if len(theirs) >= 2:
+                return (WIN - depth - 2) if mover == ai else (depth + 2 - WIN)
+            if len(theirs) == 1:
+                forced = [divmod(next(iter(theirs)), C)]
 
         if depth >= max_depth:
             return eval_f(tr, ai, human, K, to_move, depth)
 
-        if forced:
-            cands = forced
-        else:
-            c = get_optimized_candidates(b, max_dist=2)
-            r_cands = rank_candidates(b, c, to_move, mover, K)
-            cands = r_cands[:max_branch] if len(r_cands) > max_branch else r_cands
-
-        if not cands:
+        moves = forced or rank_candidates(board, tr, to_move, mover)   # ordering only, no truncation
+        if not moves:
             return 0
 
         if maximizing:
-            val = -math.inf
-            for mr, mc in cands:
-                b[mr][mc] = ai
-                tr.place(mr, mc, ai)
-                val = max(val, _alphabeta(b, depth + 1, lo, hi, False, (mr, mc)))
-                tr.undo(mr, mc, ai)
-                b[mr][mc] = EMPTY
-                lo = max(lo, val)
-                if lo >= hi:
+            value = -math.inf
+            for r, c in moves:
+                board[r][c] = ai
+                tr.place(r, c, ai)
+                value = max(value, alphabeta(depth + 1, alpha, beta, False))
+                tr.undo(r, c, ai)
+                board[r][c] = EMPTY
+                alpha = max(alpha, value)
+                if alpha >= beta:
                     break
-            return val
-        else:
-            val = math.inf
-            for mr, mc in cands:
-                b[mr][mc] = human
-                tr.place(mr, mc, human)
-                val = min(val, _alphabeta(b, depth + 1, lo, hi, True, (mr, mc)))
-                tr.undo(mr, mc, human)
-                b[mr][mc] = EMPTY
-                hi = min(hi, val)
-                if lo >= hi:
-                    break
-            return val
+            return value
 
-    best_val = -math.inf
-    best_moves = []
-    tol = 1e-6
+        value = math.inf
+        for r, c in moves:
+            board[r][c] = human
+            tr.place(r, c, human)
+            value = min(value, alphabeta(depth + 1, alpha, beta, True))
+            tr.undo(r, c, human)
+            board[r][c] = EMPTY
+            beta = min(beta, value)
+            if alpha >= beta:
+                break
+        return value
 
+    # Root: same rules as best_move.
+    mine, theirs = tr.win_cells(ai), tr.win_cells(human)
+    if mine:
+        moves = [divmod(next(iter(mine)), C)]
+    elif len(theirs) == 1:
+        moves = [divmod(next(iter(theirs)), C)]
+    else:
+        moves = rank_candidates(board, tr, ai, human)
+
+    if not moves:
+        return None, 0, time.perf_counter() - start, nodes
+
+    best_val, best_moves = -math.inf, []
     for r, c in moves:
         board[r][c] = ai
         tr.place(r, c, ai)
-        lo = best_val - 2 * tol if best_val > -math.inf else -math.inf
-        val = _alphabeta(board, 1, lo, math.inf, False, (r, c))
+        lo = best_val - 2 * TOL if best_val > -math.inf else -math.inf
+        val = alphabeta(1, lo, math.inf, False)
         tr.undo(r, c, ai)
         board[r][c] = EMPTY
 
-        if val > best_val + tol:
-            best_val = val
-            best_moves = [(r, c)]
-        elif math.isclose(val, best_val, rel_tol=0.0, abs_tol=tol):
+        if val > best_val + TOL:
+            best_val, best_moves = val, [(r, c)]
+        elif math.isclose(val, best_val, rel_tol=0.0, abs_tol=TOL):
             best_moves.append((r, c))
 
-    best = best_moves[0] if best_moves else moves[0]
-    elapsed = time.perf_counter() - start
-    return best, best_val, elapsed, nodes_visited
+    best = rng.choice(best_moves)
+
+    return best, best_val, time.perf_counter() - start, nodes
 
 
 class TicTacToeUI:

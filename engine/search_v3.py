@@ -42,7 +42,7 @@ def alphabeta(board, depth, max_depth, alpha, beta, maximizing,
     nodes_visited += 1
 
     r, c = last
-    mover   = human if maximizing else ai        # who just moved
+    mover = human if maximizing else ai        # who just moved
     to_move = ai if maximizing else human
     forced = None
 
