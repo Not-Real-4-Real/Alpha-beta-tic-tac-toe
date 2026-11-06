@@ -114,7 +114,8 @@ def best_move_v1(board, ai, human, K, max_depth=4, eval_fn=evaluate,
     elif len(theirs) == 1:
         moves = [divmod(next(iter(theirs)), tr.C)]
     else:
-        moves = rank_candidates(board, legal_moves(board), ai, human, K)
+        # moves = rank_candidates(board, legal_moves(board), ai, human, K)
+        moves = rank_candidates(board, tr, ai, human)
 
     best, best_val = None, -math.inf
     alpha, beta = -math.inf, math.inf

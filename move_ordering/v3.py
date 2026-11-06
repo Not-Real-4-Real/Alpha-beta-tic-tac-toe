@@ -47,9 +47,15 @@ def rank_candidates(board, tr, me, opp, radius=2):
     if not moves:                                      # same rare fallback
         moves = [m for m in order if board[m[0]][m[1]] == EMPTY]
 
-    hot = [divmod(x, C) for x in tr.win_cells(me)]
-    hot += [divmod(x, C) for x in tr.win_cells(opp)]
+    hot = []
+    seen = set()
+    for p in (me, opp):
+        for x in tr.win_cells(p):
+            cell = divmod(x, C)
+            if cell not in seen:
+                seen.add(cell)
+                hot.append(cell)
+
     if hot:
-        hot_set = set(hot)
-        moves = hot + [m for m in moves if m not in hot_set]
+        moves = hot + [m for m in moves if m not in seen]
     return moves
