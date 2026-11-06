@@ -5,7 +5,7 @@ from functools import partial
 
 from engine.rules import *
 from evaluation.v3 import ThreatTracker, evaluate, make_weights
-from move_ordering.v2 import rank_candidates
+from move_ordering.v3 import rank_candidates
 
 TOL = 1e-6
 
@@ -60,7 +60,8 @@ def alphabeta(board, depth, max_depth, alpha, beta, maximizing,
         return eval_fn(tr, ai, human, K, to_move, depth)
 
     # moves = legal_moves(board)
-    moves = forced or rank_candidates(board, legal_moves(board), to_move, mover, K)
+    # moves = forced or rank_candidates(board, legal_moves(board), to_move, mover, K)
+    moves = forced or rank_candidates(board, tr, to_move, mover)
     if not moves:
         return 0
 
@@ -244,7 +245,8 @@ def best_move(board, ai, human, K, max_depth=4, eval_fn=evaluate,
     elif len(theirs) == 1:
         moves = [divmod(next(iter(theirs)), tr.C)]
     else:
-        moves = rank_candidates(board, legal_moves(board), ai, human, K)
+        # moves = rank_candidates(board, legal_moves(board), ai, human, K)
+        moves = rank_candidates(board, tr, ai, human)
 
     if not moves:
         elapsed = time.perf_counter() - start
